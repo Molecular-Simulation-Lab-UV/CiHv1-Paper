@@ -1,0 +1,170 @@
+# NAMD config file
+
+proc dirlist { dir ext } {
+ set contents [glob -directory $dir *$ext]
+ foreach item $contents {
+         append out $item
+         append out "\n"
+    }
+    return $out
+}
+
+## For cubic box
+proc BoxSizePME {restartFile dim} {
+    set pattern_D  {\s*(\d+)\s*(\d+)\s*(\d+)\s*(\d+)\s*(\d+)\s*(\d+)\s*(\d+)\s*(\d+)\s*(\d+)\s*(\d+)}
+    set inStream [open $restartFile r]
+    foreach line [split [read $inStream] \n] {
+        if {[regexp $pattern_D $line match sub1 sub2 sub3 sub4 sub5 sub6 sub7 sub8 sub9 sub10 ]} {         
+	    if {$dim==0} {
+		set boxSize $sub2
+	    }
+	    if {$dim==1} {
+		set boxSize $sub6
+	    }
+	    if {$dim==2} {
+		set boxSize $sub10
+	    }
+	}
+    }
+    close $inStream
+    return $boxSize
+}
+
+
+
+# Gets last path word for parameters
+set path [pwd]
+set parName [lindex [lrange [file split $path] 1 end] end]
+
+# Based of psf and pdb in pwd 
+set psfName [lindex [dirlist $path psf] 0]
+set psfName [file tail $psfName]
+
+set pdbName [lindex [dirlist $path pdb] 0]
+set pdbName [file tail $pdbName]
+
+######HERE CHANGE STUFF#####
+set input eq4
+set out eq5
+set ConstP 0
+set ConstT 1
+set fixed 0
+set restrained 1
+set RestK 0.25
+set RUN 50000000
+set CUDA 1
+eFieldOn yes
+eField 0 0 0.040839 #150mV /84.6314118754 Amstrong eje Z CAMBIAR RESPECTO AL MODELO IA-WT CON SU CAJA!
+
+
+set temperature 298
+
+if {$CUDA} {
+   CUDASOAintegrate on
+}
+
+
+parameters              toppar/par_all36m_prot.prm
+parameters              toppar/par_all36_na.prm
+parameters              toppar/par_all36_carb.prm
+parameters              toppar/par_all36_lipid.prm
+parameters              toppar/par_all36_cgenff.prm
+parameters              toppar/toppar_water_ions.str
+parameters              toppar/toppar_ions_won.str
+parameters              toppar/toppar_all36_prot_c36m_d_aminoacids.str
+
+
+
+
+structure 		$psfName
+coordinates 		$pdbName
+
+outputName 		$out
+XSTfile			$out.xst
+
+bincoordinates		$input.coor
+binvelocities           $input.vel
+extendedSystem          $input.xsc
+
+switching		on
+switchDist		10
+cutoff			12
+pairlistdist		13.5
+margin			3
+
+binaryOutput		yes
+binaryRestart		yes
+
+#parameters		../../../../ff/par_all36_prot.prm
+#parameters		../../../../ff/par_all36_lipid.prm
+#parameters              ../../../../ff/toppar_water_ions.str
+
+paraTypeCharmm		on
+COMmotion		no
+vdwGeometricSigma       no
+wrapall                 on
+wrapwater               on
+
+outputEnergies		100
+outputTiming		100
+xstFreq			100
+dcdFreq			500
+restartFreq		500
+
+timestep		4.0
+nonBondedFreq		1
+fullElectFrequency	1
+stepsPerCycle		20
+rigidbonds              all
+exclude			scaled1-4
+1-4scaling		1
+
+#PME electrostatics
+PME yes
+PMEGridSizeX         [expr [BoxSizePME $input.restart.xsc.old 0] + 2]
+PMEGridSizeY         [expr [BoxSizePME $input.restart.xsc.old 1] + 2]
+PMEGridSizeZ         [expr [BoxSizePME $input.restart.xsc.old 2] + 2]
+
+# Const T
+if {$ConstT} {
+ langevin            yes  
+ langevinDamping     1     
+ langevinTemp        $temperature
+ langevinHydrogen    on
+}
+#Const P
+if {$ConstP} {
+ useGroupPressure      yes ;# needed for 2fs steps
+ useFlexibleCell       yes  ;# yes for periodic tube
+ useConstantArea       yes  ;# no for water box, yes for membrane
+
+ langevinPiston        on
+ langevinPistonTarget  1.01325 ;#  in bar -> 1 atm
+ langevinPistonPeriod  200.
+ langevinPistonDecay   50.
+ langevinPistonTemp    $temperature
+}
+
+if {$fixed} {
+ fixedAtoms yes
+ fixedAtomsCol B
+ set fixName [lindex [dirlist $path fixCa] 0]
+ set fixName [file tail $fixName]
+ fixedAtomsFile $fixName 
+}
+
+if {$restrained} {
+ constraints yes
+ consexp 2
+ set consName FRAME_RESTRAINED_FAWT_MD1_center.gather.fixCa
+ consref   $consName
+ conskfile $consName
+ conskcol B
+ constraintScaling $RestK
+}
+
+#Run simulation
+
+run $RUN
+
+
